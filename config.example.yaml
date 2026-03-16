@@ -1,0 +1,7 @@
+DISCORD_TOKEN: your-discord-token
+OLLAMA_CHAT: http://localhost:11434/api/chat
+OLLAMA_TAGS: http://localhost:11434/api/tags
+DEFAULT_MODEL: qwen3.5:latest
+LOG_LEVEL: INFO
+UPLOAD_ROOT: uploads
+OLLAMA_PARALLELISM: 1

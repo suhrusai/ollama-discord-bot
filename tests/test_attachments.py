@@ -11,7 +11,7 @@ def test_delete_user_uploads(tmp_path, monkeypatch):
     sample.write_text("content")
 
     monkeypatch.setenv("UPLOAD_ROOT", str(uploads_root))
-    monkeypatch.setattr("bot.attachments.UPLOAD_ROOT", str(uploads_root))
+    monkeypatch.setattr("bot.services.attachments.UPLOAD_ROOT", str(uploads_root))
 
     delete_user_uploads(user_id)
 

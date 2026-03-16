@@ -5,12 +5,13 @@ from pathlib import Path
 
 import aiohttp
 
-from bot.config import OLLAMA_CHAT, OLLAMA_TAGS
+from bot.config import OLLAMA_CHAT, OLLAMA_PARALLELISM, OLLAMA_TAGS
 from bot.files.heic_converter import convert_heic_to_jpg
 from bot.prompts import SYSTEM_PROMPT
 from bot.state import chat_history, get_user_model
 
 logger = logging.getLogger("discord-ai.services.ollama")
+ollama_semaphore = asyncio.Semaphore(OLLAMA_PARALLELISM)
 
 async def get_models():
     timeout = aiohttp.ClientTimeout(total=3000)
@@ -28,6 +29,8 @@ async def ask_ollama(user_id, prompt, files=None):
     messages = [SYSTEM_PROMPT] + chat_history[user_id]
     file_context = ""
     images = []
+
+    image_extensions = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp"}
 
     if files:
         logger.info("%s uploaded %s file(s)", user_id, len(files))
@@ -54,6 +57,15 @@ async def ask_ollama(user_id, prompt, files=None):
 
                     encoded = await asyncio.to_thread(
                         lambda: base64.b64encode(open(file_path, "rb").read()).decode()
+                    )
+
+                    images.append(encoded)
+                    continue
+                elif ext in image_extensions:
+                    logger.info("Encoding image: %s", filename)
+
+                    encoded = await asyncio.to_thread(
+                        lambda: base64.b64encode(Path(file_path).read_bytes()).decode()
                     )
 
                     images.append(encoded)
@@ -92,19 +104,20 @@ async def ask_ollama(user_id, prompt, files=None):
     timeout = aiohttp.ClientTimeout(total=3600)
 
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(OLLAMA_CHAT, json=payload) as resp:
-                data = await resp.json()
-                logger.info("Ollama raw response: %s", data)
+        async with ollama_semaphore:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(OLLAMA_CHAT, json=payload) as resp:
+                    data = await resp.json()
+                    logger.info("Ollama raw response: %s", data)
 
-                if "message" in data and "content" in data["message"]:
-                    content = data["message"]["content"]
-                elif "response" in data:
-                    content = data["response"]
-                elif "error" in data:
-                    content = f"⚠️ Ollama error: {data['error']}"
-                else:
-                    content = "⚠️ Unknown Ollama response format."
+                    if "message" in data and "content" in data["message"]:
+                        content = data["message"]["content"]
+                    elif "response" in data:
+                        content = data["response"]
+                    elif "error" in data:
+                        content = f"⚠️ Ollama error: {data['error']}"
+                    else:
+                        content = "⚠️ Unknown Ollama response format."
     except asyncio.TimeoutError:
         logger.error("Ollama request timed out")
         return '{"messages":[{"content":"⚠️ Ollama took too long to respond."}]}'

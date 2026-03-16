@@ -1,4 +1,4 @@
-import bot.handlers  # register events; keeps handlers registered without direct usage
+import bot.events  # register events; keeps handlers registered without direct usage
 
 from bot.app import run
 

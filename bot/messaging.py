@@ -2,11 +2,11 @@ import discord
 
 from bot.utils import fix_codeblocks, map_button_style, safe_json_parse
 
-async def send_ai_json(channel, ai_response):
+async def send_ai_json(channel, ai_response, reply_to: discord.Message | None = None):
     parsed = safe_json_parse(ai_response)
 
     if not parsed:
-        await channel.send(ai_response[:2000])
+        await channel.send(ai_response[:2000], reference=reply_to)
         return
 
     for msg in parsed.get("messages", []):
@@ -64,5 +64,6 @@ async def send_ai_json(channel, ai_response):
         await channel.send(
             content=content,
             embeds=embeds,
-            view=view
+            view=view,
+            reference=reply_to
         )

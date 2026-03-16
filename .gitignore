@@ -1,9 +1,10 @@
-.env
 __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
 uploads/
+
+config.yaml
 
 # IDE settings and workspace data
 .idea/
