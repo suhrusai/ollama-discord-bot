@@ -69,6 +69,29 @@ Current tests cover attachment cleanup (`tests/test_attachments.py`) and utility
 ## Logging & Troubleshooting
 `bot.logger.configure_logging` sets a consistent `%(asctime)s | %(levelname)s | %(message)s` format. Problems include missing `DISCORD_TOKEN`, Ollama timeouts (handled with a 1-hour timeout), and failures reading uploads (logged at error level).
 
+## Deployment & Operations
+### Docker
+1. Build a container based on `python:3.12-slim`, copy the project, install `requirements.txt`, and create a volume for `uploads`. Example:
+   ```dockerfile
+   FROM python:3.12-slim
+   WORKDIR /app
+   COPY . .
+   RUN pip install --no-cache-dir -r requirements.txt
+   CMD ["python", "main.py"]
+   ```
+2. Mount `config.yaml` from the host (`-v "$(pwd)/config.yaml:/app/config.yaml:ro"`) so secrets stay outside the image.
+3. Expose ports if you need to access logs remotely or supervise health checks; Discord interactions run outbound so no public ports are required.
+
+### CI/CD
+- Run `pytest` on every push or pull request to guard helpers such as `bot.services.attachments` and the new `bot.services.ollama` coverage.
+- Lint Python files, rebuild Docker images, and publish artifacts only when configuration variables (Discord token, Ollama endpoints) are provided as secrets.
+- Keep `config.yaml` in CI as a templated file or use environment variables to override without checking credentials into the repo.
+
+### Hosted Ollama Instances
+- Point `OLLAMA_CHAT` / `OLLAMA_TAGS` at your hosted model endpoint (TLS, auth, or a load balancer is supported).
+- Ensure the machine running Ollama is reachable from wherever the bot is hosted, or set up a secure tunnel if the instance is behind a firewall.
+- Monitor `bot.logger` output for request latency; adjust `OLLAMA_PARALLELISM` and retries when the hosted API rates-limit or throttles requests.
+
 ## Next Steps
 1. Add more tests for `bot.services.ollama` to verify payload handling and HEIC conversions.
 2. Expand documentation for deploying the bot (Docker, CI, or hosted Ollama instances).
