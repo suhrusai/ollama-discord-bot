@@ -1,8 +1,11 @@
 import discord
+from discord import app_commands
 
 from bot.client import client, tree
+from bot.config import BIRTHDAY_MCP_BASE_URL
 from bot.logger import logger
 from bot.services.attachments import delete_user_uploads
+from birthday_bot_mcp_server import MCPError, get_current_weather
 from bot.services.ollama import get_models
 from bot.state import get_user_model, reset_user_state, set_user_model
 
@@ -43,6 +46,34 @@ async def models(interaction: discord.Interaction):
 @tree.command(name="current", description="Show current model")
 async def current(interaction: discord.Interaction):
     await interaction.response.send_message(f"Current model: {get_user_model(str(interaction.user.id))}")
+
+
+@tree.command(name="weather", description="Fetch current weather from the MCP server")
+async def weather(
+    interaction: discord.Interaction,
+    latitude: app_commands.Range[float, -90.0, 90.0],
+    longitude: app_commands.Range[float, -180.0, 180.0],
+):
+    try:
+        weather_data = await get_current_weather(latitude, longitude, base_url=BIRTHDAY_MCP_BASE_URL)
+    except MCPError as exc:
+        await interaction.response.send_message(str(exc), ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="Current Weather",
+        description=f"Locale: {latitude:.4f}, {longitude:.4f}",
+        color=0x1D8BFF
+    )
+
+    embed.add_field(name="Temperature (°C)", value=f"{weather_data['temperature']:.1f}", inline=True)
+    embed.add_field(name="Wind Speed (km/h)", value=f"{weather_data['windspeed']:.1f}", inline=True)
+    embed.add_field(name="Wind Direction", value=f"{weather_data['winddirection']:.0f}°", inline=True)
+    embed.add_field(name="Weather Code", value=str(weather_data["weathercode"]), inline=True)
+    embed.add_field(name="Local Time", value=weather_data["time"], inline=True)
+    embed.set_footer(text=f"Timezone: {weather_data['timezone']}")
+
+    await interaction.response.send_message(embed=embed)
 
 
 @client.event

@@ -23,7 +23,7 @@ Lightweight Discord helper that turns mention-based prompts and uploads into Oll
 ## Running
 `python main.py`
 
-The entry point in `main.py` wires the bot handlers defined in `bot/handlers/handlers.py`, configures logging, checks for a `DISCORD_TOKEN`, and launches the Discord client.
+ The entry point in `main.py` wires the event modules under `bot/events`, configures logging, checks for a `DISCORD_TOKEN`, and launches the Discord client.
 
 ## Configuration
 The bot reads configuration from `config.yaml` at the project root (values can still be overridden via environment variables if necessary).
@@ -36,7 +36,9 @@ The bot reads configuration from `config.yaml` at the project root (values can s
 | `LOG_LEVEL` | Controls logging verbosity for `bot.logger`.
 | `UPLOAD_ROOT` | Root folder for persisting attachments that accompany prompts.
 | `OLLAMA_PARALLELISM` | Maximum concurrent requests to the Ollama API (default `1` to serialize calls).
-| `OLLAMA_PARALLELISM` | Maximum concurrent requests to the Ollama API (default `1` to serialize calls).
+| `OLLAMA_RESPONSE_TIMEOUT` | Timeout in seconds for regular Ollama prompts (default `3600`).
+| `OLLAMA_SUMMARY_TIMEOUT` | Timeout in seconds for context summarization requests (default `120`).
+| `BIRTHDAY_MCP_BASE_URL` | Base URL for the Birthday Bot MCP weather service (default `http://localhost:8060`).
 
 ## Usage
 - Mention the bot in any channel (e.g., `@Bot Hello`). The handler strips the mention, saves attachments, and relays the prompt plus context to Ollama.
@@ -45,14 +47,17 @@ The bot reads configuration from `config.yaml` at the project root (values can s
 - `/models` fetches available Ollama models (`bot.services.ollama.get_models`) and lets the user switch with a dropdown; `/current` reports their choice.
 - Requests to Ollama are serialized. If a prompt arrives while another is being handled, the bot replies with a queue message (e.g., “Queue #2”), and that message is deleted once the request is served.
 - Responses quote the triggering message so users can see which exchange the bot is addressing.
+- `/weather` queries the Birthday Bot MCP server for current weather at the provided latitude/longitude and returns a structured embed.
 - The bot builds Discord responses with embeds, buttons, and custom views when the Ollama response contains `components` or `embeds`.
 
 ## Architecture Highlights
 - `bot/config.py` loads configuration from `config.yaml` (with environment-variable overrides) so operational parameters stay in one place.
-- `bot/services/ollama.py` keeps chat history per user, appends the `SYSTEM_PROMPT`, merges uploaded files, handles HEIC conversion (`bot/files/heic_converter.py`), and posts to the configured Ollama endpoint with a semaphore governed by `OLLAMA_PARALLELISM` so the Ollama server is never hit in parallel more than needed.
+- `bot/services/ollama.py` keeps chat history per user, requests context compression from Ollama when the saved history grows beyond the limit, then appends the `SYSTEM_PROMPT`, merges uploaded files, handles HEIC conversion (`bot/files/heic_converter.py`), and posts to the configured Ollama endpoint with a semaphore governed by `OLLAMA_PARALLELISM` so the Ollama server is never hit in parallel more than needed.
 - `bot/messaging.py` parses Ollama JSON with `bot.utils.safe_json_parse`, adds fenced code blocks (`fix_codeblocks`), and maps component buttons to Discord UI elements.
 - `bot/events/message_handler.py` serializes mention handling through a queue and calls `ask_ollama` while quoting the triggering message.
-`bot/events/command_handlers.py` exposes slash commands, view dropdowns, and sync logic that iterates over every guild the bot is a member of at startup.
+- `bot/events/command_handlers.py` exposes slash commands, view dropdowns, and sync logic that iterates over every guild the bot is a member of at startup.
+- `birthday_bot_mcp_server` exposes a small client for the FastMCP weather proxy, so `/weather` yields temperature, wind, code, and local time.
+- `bot/state.py` compresses stored chat entries with zlib/base64 before trimming them to the recent eight messages so each request still sees decompressed history.
 - `bot/state.py` tracks chat history and per-user model selections, and `bot.utils` sanitizes output, maps button styles, and recovers JSON from imperfect model text.
 
 ## Project Layout
@@ -61,6 +66,7 @@ The bot reads configuration from `config.yaml` at the project root (values can s
 - `bot/services` – Ollama/world-specific helpers such as attachment storage, Ollama client wrappers, and file conversion utilities.
 - `bot/files` – Thin helpers such as `heic_converter.py` that interact with external libraries.
 - `tests` – pytest-based unit tests for helpers and services.
+- `birthday_bot_mcp_server` – standalone FastMCP MCP-style server exposing a weather lookup endpoint.
 
 ## Testing
 `pytest`

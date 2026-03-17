@@ -5,13 +5,33 @@ from pathlib import Path
 
 import aiohttp
 
-from bot.config import OLLAMA_CHAT, OLLAMA_PARALLELISM, OLLAMA_TAGS
+from bot.config import (
+    DEFAULT_MODEL,
+    OLLAMA_CHAT,
+    OLLAMA_PARALLELISM,
+    OLLAMA_RESPONSE_TIMEOUT,
+    OLLAMA_SUMMARY_TIMEOUT,
+    OLLAMA_TAGS,
+)
 from bot.files.heic_converter import convert_heic_to_jpg
 from bot.prompts import SYSTEM_PROMPT
-from bot.state import chat_history, get_user_model
+from bot.state import (
+    HISTORY_LIMIT,
+    append_history,
+    clear_history,
+    get_decoded_history,
+    get_user_model,
+)
 
 logger = logging.getLogger("discord-ai.services.ollama")
 ollama_semaphore = asyncio.Semaphore(OLLAMA_PARALLELISM)
+
+SUMMARY_SYSTEM_PROMPT = (
+    "You are a context compression assistant. Summarize the following "
+    "conversation into a short paragraph (<= 200 words) while preserving "
+    "the user intent and any outstanding action items."
+)
+
 
 async def get_models():
     timeout = aiohttp.ClientTimeout(total=3000)
@@ -21,12 +41,9 @@ async def get_models():
             return [model["name"] for model in data.get("models", [])]
 
 async def ask_ollama(user_id, prompt, files=None):
-    if user_id not in chat_history:
-        chat_history[user_id] = []
-
-    chat_history[user_id] = chat_history[user_id][-8:]
-
-    messages = [SYSTEM_PROMPT] + chat_history[user_id]
+    await _maybe_compress_history(user_id)
+    history = get_decoded_history(user_id)
+    messages = [SYSTEM_PROMPT] + history
     file_context = ""
     images = []
 
@@ -101,38 +118,69 @@ async def ask_ollama(user_id, prompt, files=None):
 
     logger.info("Sending prompt to Ollama from user %s", user_id)
 
-    timeout = aiohttp.ClientTimeout(total=3600)
+    timeout = aiohttp.ClientTimeout(total=OLLAMA_RESPONSE_TIMEOUT)
 
     try:
-        async with ollama_semaphore:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(OLLAMA_CHAT, json=payload) as resp:
-                    data = await resp.json()
-                    logger.info("Ollama raw response: %s", data)
-
-                    if "message" in data and "content" in data["message"]:
-                        content = data["message"]["content"]
-                    elif "response" in data:
-                        content = data["response"]
-                    elif "error" in data:
-                        content = f"⚠️ Ollama error: {data['error']}"
-                    else:
-                        content = "⚠️ Unknown Ollama response format."
+        data = await _send_payload(payload, timeout=timeout)
+        content = _extract_content(data)
     except asyncio.TimeoutError:
         logger.error("Ollama request timed out")
         return '{"messages":[{"content":"⚠️ Ollama took too long to respond."}]}'
 
-    chat_history[user_id].append({
-        "role": "user",
-        "content": final_prompt,
-        "images": images if images else None
-    })
-
-    chat_history[user_id].append({
-        "role": "assistant",
-        "content": content
-    })
-
-    logger.info("Ollama response length: %s characters", len(content))
+    append_history(user_id, "user", final_prompt, images if images else None)
+    append_history(user_id, "assistant", content, None)
 
     return content
+
+
+async def _maybe_compress_history(user_id: str):
+    history = get_decoded_history(user_id)
+    if len(history) < HISTORY_LIMIT:
+        return
+
+    summary = await _summarize_history(history)
+    if summary:
+        clear_history(user_id)
+        append_history(user_id, "system", summary)
+        logger.info("Context compressed for %s: %s", user_id, summary)
+
+
+async def _summarize_history(history: list[dict[str, object]]) -> str | None:
+    filtered = [entry for entry in history if entry.get("content")]
+    if not filtered:
+        return None
+
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}] + filtered,
+        "stream": False
+    }
+
+    try:
+        data = await _send_payload(payload, timeout=aiohttp.ClientTimeout(total=OLLAMA_SUMMARY_TIMEOUT))
+    except asyncio.TimeoutError:
+        logger.warning("Context summarization timed out; keeping existing history.")
+        return None
+
+    summary = _extract_content(data)
+    logger.info("Summarized history: %s", summary)
+    return summary
+
+
+async def _send_payload(payload: dict[str, object], timeout: aiohttp.ClientTimeout):
+    async with ollama_semaphore:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(OLLAMA_CHAT, json=payload) as resp:
+                data = await resp.json()
+                logger.info("Ollama raw response: %s", data)
+                return data
+
+
+def _extract_content(data: dict[str, object]) -> str:
+    if "message" in data and "content" in data["message"]:
+        return data["message"]["content"]
+    if "response" in data:
+        return data["response"]
+    if "error" in data:
+        return f"⚠️ Ollama error: {data['error']}"
+    return "⚠️ Unknown Ollama response format."
